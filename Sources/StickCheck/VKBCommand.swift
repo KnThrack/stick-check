@@ -4,7 +4,8 @@ import StickCore
 import StickHID
 
 /// Command-line access to a VKB stick's stored configuration. `run` only reads. `restore` writes
-/// a saved configuration back, and only when given `--yes`.
+/// a saved configuration back, and only when given `--yes`. `calibrate` runs the stick's own
+/// calibration, each step waiting for Return.
 @MainActor
 enum VKBCommand {
     /// Prints the configuration summary; with `backup`, also saves the block. Returns the exit code.

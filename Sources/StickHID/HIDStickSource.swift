@@ -18,7 +18,8 @@ public struct DeviceInfo: Sendable, Equatable, Identifiable {
 }
 
 /// Reads joysticks through IOKit HID. It listens to input reports and sends nothing itself.
-/// The only path that sends anything to a device is `vkbTransport()`, used for read requests.
+/// The only path that sends anything to a device is `vkbTransport()`, which carries VKB's
+/// configuration protocol: reads, and the writes and calibration commands the user asks for.
 @MainActor
 public final class HIDStickSource {
     private final class Entry {
