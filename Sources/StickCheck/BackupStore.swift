@@ -15,8 +15,16 @@ enum BackupStore {
             .appendingPathComponent("Stick Check/Backups", isDirectory: true)
     }
 
-    /// Writes the raw block, reads it back to be sure, and write-protects it.
+    /// Writes the raw block, reads it back to be sure, and write-protects it. If a backup with
+    /// exactly these contents already exists, that file is returned and nothing is written.
     static func save(_ block: VKBBlock, deviceName: String, date: Date = Date()) throws -> URL {
+        let wanted = Data(block.bytes)
+        let existing = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+        if let same = existing.filter({ $0.pathExtension == "vkbblock" })
+            .sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
+            .first(where: { (try? Data(contentsOf: $0)) == wanted }) {
+            return same
+        }
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HHmmss"
         let url = folder.appendingPathComponent("\(deviceName) \(formatter.string(from: date)).vkbblock")

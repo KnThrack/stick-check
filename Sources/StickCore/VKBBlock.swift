@@ -81,6 +81,11 @@ public struct VKBBlock: Sendable, Equatable {
 
     public var calibratedMask: UInt8 { bytes[0x0C] }
 
+    /// Positions at which two blocks differ.
+    public func differences(from other: VKBBlock) -> [Int] {
+        bytes.indices.filter { bytes[$0] != other.bytes[$0] }
+    }
+
     /// The first eight physical axis slots (records of 8 bytes at 0x7C).
     public var physicalAxes: [VKBPhysicalAxis] {
         (0..<8).map { slot in

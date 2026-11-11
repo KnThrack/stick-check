@@ -47,7 +47,10 @@ public struct AxisReport: Sendable, Equatable, Identifiable {
     /// Spread of the resting places after release, % of half the range.
     public var settleSpreadPercent: Double?
     /// Dead zone (% of half the range) that hides everything seen at rest. 0 means none needed.
+    /// Nil for sliders, and when `needsRecalibrationNotDeadzone` is set.
     public var suggestedDeadzonePercent: Double?
+    /// The centre is too far off for a dead zone to be a sensible fix.
+    public var needsRecalibrationNotDeadzone = false
     public var findings: [Finding] = []
     public var severity: Severity = .ok
 
@@ -138,7 +141,12 @@ public enum Analysis {
             let restingPlaces = [Double(m.rest.low), Double(m.rest.high)] + values
             let needed = 100 * (restingPlaces.map { abs($0 - axis.mid) }.max() ?? 0) / axis.halfRange
             let deadzone = needed < 0.1 ? 0 : (needed * s.deadzoneMargin / s.deadzoneStep).rounded(.up) * s.deadzoneStep
-            r.suggestedDeadzonePercent = deadzone
+            if offsetGrade == .bad {
+                // A dead zone wide enough to swallow this would swallow most of the travel too.
+                r.needsRecalibrationNotDeadzone = true
+            } else {
+                r.suggestedDeadzonePercent = deadzone
+            }
         }
 
         if findings.allSatisfy({ $0.severity == .ok }) {
@@ -187,7 +195,8 @@ extension Report {
                 r.noiseCounts.map { "\($0) counts" } ?? dash,
                 r.rangeLow.flatMap { low in r.rangeHigh.map { "\(low)…\($0) of \(r.axis.logicalMin)…\(r.axis.logicalMax)" } } ?? dash,
                 r.settleSpreadPercent.map { "\(fmt($0, 2)) % (\(r.settleCount) releases)" } ?? dash,
-                r.suggestedDeadzonePercent.map { $0 == 0 ? "none" : "\(fmt($0)) %" } ?? dash,
+                r.needsRecalibrationNotDeadzone ? "not a fix: recalibrate"
+                    : r.suggestedDeadzonePercent.map { $0 == 0 ? "none" : "\(fmt($0)) %" } ?? dash,
             ]
             lines.append("| " + cells.joined(separator: " | ") + " |")
         }

@@ -13,6 +13,14 @@ enum Main {
             exit(VKBCommand.run(backup: false))
         } else if arguments.contains("--vkb-backup") {
             exit(VKBCommand.run(backup: true))
+        } else if arguments.contains("--vkb-calibrate") {
+            exit(VKBCommand.calibrate(form: arguments.contains("--plain") ? .plain : .encoded))
+        } else if let index = arguments.firstIndex(of: "--vkb-restore") {
+            guard index + 1 < arguments.count else {
+                print("Usage: StickCheck --vkb-restore <backup file> [--yes]")
+                exit(64)
+            }
+            exit(VKBCommand.restore(path: arguments[index + 1], confirmed: arguments.contains("--yes")))
         } else {
             StickCheckApp.main()
         }

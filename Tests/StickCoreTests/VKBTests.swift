@@ -10,6 +10,11 @@ final class MockStick: FeatureTransport {
     var staleNext = false
     var corruptReplies = false
     var silent = false
+    /// A long write in progress: the bytes still expected, the header CRC and what has arrived.
+    var incoming: (size: Int, crc: UInt16, data: [UInt8])?
+    var writesAccepted = 0
+    var restarts = 0
+    var shortCommands: [(command: UInt8, argument: UInt8)] = []
 
     init(token: [UInt8], block: [UInt8]) {
         self.token = token
@@ -19,7 +24,26 @@ final class MockStick: FeatureTransport {
     func send(_ frame: [UInt8]) throws {
         sent.append(frame)
         replies = []
-        guard !silent, frame.count == 128, frame[0] == 0xA5, frame[1] & 0xC0 == 0xC0 else { return }
+        guard !silent, frame.count == 128 else { return }
+        if var write = incoming {
+            // Continuation frames of a long write carry no header.
+            write.data += frame.prefix(write.size - write.data.count)
+            incoming = write
+            finishWriteIfComplete()
+            return
+        }
+        if frame[0] == 0xA5, frame[1] == 0x5A {
+            shortCommands.append((frame[2], frame[3]))
+            replies = [[0x5A, 0xA5, frame[2], frame[3]] + [UInt8](repeating: 0, count: 124)]
+            return
+        }
+        if frame[0] == 0xA5, frame[1] == 0xA4 {
+            let size = Int(frame[2]) | Int(frame[3]) << 8
+            incoming = (size, UInt16(frame[6]) | UInt16(frame[7]) << 8, Array(frame[8..<min(128, 8 + size)]))
+            finishWriteIfComplete()
+            return
+        }
+        guard frame[0] == 0xA5, frame[1] & 0xC0 == 0xC0 else { return }
         if staleNext {
             staleNext = false
             replies = [[0x5A, 0x4B] + [UInt8](repeating: 0, count: 126)]
@@ -48,6 +72,24 @@ final class MockStick: FeatureTransport {
             replies.append(chunk + [UInt8](repeating: 0, count: 128 - chunk.count))
             offset += 128
         }
+    }
+
+    private func finishWriteIfComplete() {
+        guard let write = incoming, write.data.count >= write.size else { return }
+        incoming = nil
+        guard VKBBytes.crc16Modbus(write.data) == write.crc else {
+            replies = [[0x22, 0x22, 0x22, 0x22] + [UInt8](repeating: 0, count: 124)]
+            return
+        }
+        // Like the real stick: keep its own first four bytes and recompute the CRC-32.
+        var stored = VKBBytes.rc4(write.data, key: Array(token.prefix(15)))
+        stored.replaceSubrange(0..<4, with: block[0..<4])
+        let crc = VKBBytes.crc32STM32(stored[8...])
+        for i in 0..<4 { stored[4 + i] = UInt8((crc >> (8 * UInt32(i))) & 0xFF) }
+        block = stored
+        writesAccepted += 1
+        restarts += 1
+        replies = [[0x5A, 0xA5, 0x88, 0x00] + [UInt8](repeating: 0, count: 124)]
     }
 
     func receive() throws -> [UInt8] {
@@ -109,7 +151,7 @@ let sampleToken: [UInt8] = (1...16).map { UInt8($0 * 13 & 0xFF) }
     #expect(try link.readBlock(token: token, from: .readRAM).bytes == sampleBlock())
 }
 
-@Test func onlyReadRequestsAreEverSent() throws {
+@Test func readingSendsOnlyReadRequests() throws {
     let stick = MockStick(token: sampleToken, block: sampleBlock())
     var link = VKBLink(transport: stick)
     let token = try link.readToken()
@@ -193,4 +235,136 @@ let sampleToken: [UInt8] = (1...16).map { UInt8($0 * 13 & 0xFF) }
     #expect(block.storedAxis(named: "Slider") == nil)   // hidden
     #expect(block.storedAxis(named: "Z") == nil)        // not configured
     #expect(block.summary.contains("Rz      ← slot 2, 11 bit, dead zone 1.5 % low / 2.0 % high, centred, inverted"))
+}
+
+// MARK: - Writing
+
+/// The sample block with one physical axis's bias changed and the checksum redone.
+func editedBlock() -> [UInt8] {
+    var block = sampleBlock()
+    block[0x7C + 6] = 99
+    let crc = VKBBytes.crc32STM32(block[8...])
+    for i in 0..<4 { block[4 + i] = UInt8((crc >> (8 * UInt32(i))) & 0xFF) }
+    return block
+}
+
+@Test func writeFramesFollowTheDocumentedLayout() {
+    let data = (0..<0x1000).map { UInt8($0 & 0xFF) }
+    let frames = VKBLink.writeFrames(data: data)
+    #expect(frames.count == 33)
+    #expect(frames.allSatisfy { $0.count == 128 })
+    let crc = VKBBytes.crc16Modbus(data)
+    #expect(Array(frames[0][0..<8]) == [0xA5, 0xA4, 0x00, 0x10, 0x00, 0x00, UInt8(crc & 0xFF), UInt8(crc >> 8)])
+    #expect(Array(frames[0][8...]) == Array(data[0..<120]))
+    #expect(frames[1] == Array(data[120..<248]))
+    // 4096 = 120 + 31 × 128 + 8: the last frame carries 8 bytes and is zero-padded.
+    #expect(Array(frames[32][0..<8]) == Array(data[4088...]))
+    #expect(frames[32][8...].allSatisfy { $0 == 0 })
+    // Never a short command, which would have 0x5A as its second byte.
+    #expect(frames[0][1] != 0x5A)
+}
+
+@Test func writingTheSameBlockBackLeavesItIdentical() throws {
+    let stick = MockStick(token: sampleToken, block: sampleBlock())
+    var link = VKBLink(transport: stick)
+    let token = try link.readToken()
+    let current = try link.readBlock(token: token)
+    #expect(try link.writeBlock(current, token: token, replacing: current) == .written)
+    #expect(stick.writesAccepted == 1 && stick.restarts == 1)
+    #expect(stick.block == sampleBlock())
+    #expect(try link.readBlock(token: token) == current)
+}
+
+@Test func writingAChangedBlockStoresItAndRestoringBringsTheOldOneBack() throws {
+    let stick = MockStick(token: sampleToken, block: sampleBlock())
+    var link = VKBLink(transport: stick)
+    let token = try link.readToken()
+    let original = try link.readBlock(token: token)
+    let edited = try VKBBlock(bytes: editedBlock())
+    #expect(edited.differences(from: original).count == 5)   // one setting and the four CRC bytes
+
+    #expect(try link.writeBlock(edited, token: token, replacing: original) == .written)
+    #expect(try link.readBlock(token: token).physicalAxes[0].bias == 99)
+    #expect(try link.writeBlock(original, token: token, replacing: edited) == .written)
+    #expect(stick.block == sampleBlock())
+}
+
+@Test func writeIsRefusedBeforeAnythingIsSent() throws {
+    let stick = MockStick(token: sampleToken, block: sampleBlock())
+    var link = VKBLink(transport: stick)
+    let token = try link.readToken()
+    let current = try link.readBlock(token: token)
+    func writeFramesSent() -> Int { stick.sent.count { $0[1] == 0xA4 } }
+
+    // Damaged file.
+    var damaged = sampleBlock()
+    damaged[0x300] ^= 0x01
+    #expect(throws: VKBError.blockNotIntact) {
+        try link.writeBlock(try VKBBlock(bytes: damaged), token: token, replacing: current)
+    }
+    // A block for other firmware, with a valid checksum of its own.
+    var other = sampleBlock()
+    other[8] = 0x0D
+    let crc = VKBBytes.crc32STM32(other[8...])
+    for i in 0..<4 { other[4 + i] = UInt8((crc >> (8 * UInt32(i))) & 0xFF) }
+    #expect(throws: VKBError.blockForOtherDevice) {
+        try link.writeBlock(try VKBBlock(bytes: other), token: token, replacing: current)
+    }
+    // The stick changed behind the caller's back.
+    stick.block = editedBlock()
+    #expect(throws: VKBError.stickChanged) {
+        try link.writeBlock(current, token: token, replacing: current)
+    }
+    // A wrong token cannot decrypt the stick to `current`, so it never gets to encrypt a write.
+    stick.block = sampleBlock()
+    var wrongToken = token
+    wrongToken[0] ^= 0x55
+    #expect(throws: VKBError.stickChanged) {
+        try link.writeBlock(current, token: wrongToken, replacing: current)
+    }
+    #expect(writeFramesSent() == 0)
+    #expect(stick.writesAccepted == 0)
+}
+
+@Test func stickRefusingTheTransferIsReported() throws {
+    #expect(VKBWriteStatus(word: 0x0088_A55A) == .written)
+    #expect(VKBWriteStatus(word: 0x2222_2222) == .crcError)
+    #expect(VKBWriteStatus(word: 0x1234_5678) == .unknown(0x1234_5678))
+}
+
+// MARK: - Calibration commands
+
+@Test func calibrationFramesCarryOnlyStartOrCommit() {
+    #expect(VKBCalibrationCommand.allCases.map(\.rawValue) == [0x02, 0x03])
+    for command in VKBCalibrationCommand.allCases {
+        let plain = VKBLink.calibrationFrame(command, form: .plain, token: sampleToken)
+        #expect(plain.count == 128)
+        #expect(Array(plain[0..<4]) == [0xA5, 0x5A, command.rawValue, 0x00])
+        #expect(plain[4...].allSatisfy { $0 == 0 })
+
+        // Encoded: the same four bytes in the clear; undoing the cipher with them as the key
+        // gives the token where the description puts it, and zeros everywhere else.
+        let encoded = VKBLink.calibrationFrame(command, form: .encoded, token: sampleToken)
+        #expect(encoded.count == 128)
+        #expect(Array(encoded[0..<4]) == [0xA5, 0x5A, command.rawValue, 0x00])
+        let clear = VKBBytes.rc4(Array(encoded[4..<124]), key: Array(encoded[0..<4]))
+        #expect(Array(clear[(0x57 - 4)..<(0x67 - 4)]) == sampleToken)
+        #expect(clear[..<(0x57 - 4)].allSatisfy { $0 == 0 } && clear[(0x67 - 4)...].allSatisfy { $0 == 0 })
+        #expect(encoded[124...].allSatisfy { $0 == 0 })
+    }
+}
+
+@Test func calibrationCommandIsSentOnceAndItsAnswerReturned() throws {
+    let stick = MockStick(token: sampleToken, block: sampleBlock())
+    var link = VKBLink(transport: stick)
+    let token = try link.readToken()
+    _ = try link.readBlock(token: token)
+    #expect(try link.sendCalibration(.start, form: .plain, token: token) == [0x5A, 0xA5, 0x02, 0x00, 0, 0, 0, 0])
+    #expect(try link.sendCalibration(.commit, form: .encoded, token: token) == [0x5A, 0xA5, 0x03, 0x00, 0, 0, 0, 0])
+    #expect(stick.shortCommands.map(\.command) == [0x02, 0x03])
+    #expect(stick.shortCommands.allSatisfy { $0.argument == 0 })
+
+    // A stick that says nothing gives an all-zero answer rather than an error.
+    stick.silent = true
+    #expect(try link.sendCalibration(.start, form: .plain, token: token) == [UInt8](repeating: 0, count: 8))
 }

@@ -203,7 +203,9 @@ struct AxisResult: View {
                         row("Returns to", ([low, high].compactMap { $0 }).joined(separator: ", ")
                             + String(format: " (%.2f %% spread, %d releases)", spread, report.settleCount))
                     }
-                    if let deadzone = report.suggestedDeadzonePercent {
+                    if report.needsRecalibrationNotDeadzone {
+                        row("Dead zone", "not a fix here: recalibrate")
+                    } else if let deadzone = report.suggestedDeadzonePercent {
                         row("Dead zone", deadzone == 0 ? "none needed" : String(format: "%.1f %%", deadzone))
                     }
                 }

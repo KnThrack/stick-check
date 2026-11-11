@@ -84,8 +84,18 @@ func runTest(rest: Int = 2048, low: Int = 0, high: Int = 4095, backFromLow: Int?
     let x = runTest(rest: 2248).axes[0]
     #expect(x.severity == .bad)
     #expect(abs((x.centreOffsetPercent ?? 0) - 9.79) < 0.05)
-    // 9.79 % × 1.25 margin, rounded up to the next 0.5.
-    #expect(x.suggestedDeadzonePercent == 12.5)
+    // Too far off for a dead zone: none is suggested.
+    #expect(x.suggestedDeadzonePercent == nil)
+    #expect(x.needsRecalibrationNotDeadzone)
+}
+
+@Test func slightlyOffCentreRestGetsADeadzone() {
+    // 2080 is 32.5 counts from 2047.5: 1.59 % of half the range, marginal.
+    let x = runTest(rest: 2080).axes[0]
+    #expect(x.severity == .marginal)
+    #expect(!x.needsRecalibrationNotDeadzone)
+    // 1.59 % × 1.25 margin, rounded up to the next 0.5.
+    #expect(x.suggestedDeadzonePercent == 2.0)
 }
 
 @Test func shortTravelIsReported() {
@@ -177,6 +187,7 @@ func runTest(rest: Int = 2048, low: Int = 0, high: Int = 4095, backFromLow: Int?
     let text = runTest(rest: 2248).markdown(title: "Test stick", subtitle: "11-11-2026 22:13")
     #expect(text.contains("# Stick check: Test stick"))
     #expect(text.contains("| X | self-centring | Needs recalibration |"))
+    #expect(text.contains("| not a fix: recalibrate |"))
     #expect(text.contains("| Z | slider | OK |"))
 }
 
