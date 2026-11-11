@@ -11,6 +11,13 @@ struct Pad: Identifiable {
     let y: Int
 }
 
+/// What one axis row draws: the current value and the range seen since the marks were reset.
+struct AxisReading: Equatable {
+    let value: Int
+    let seenLow: Int
+    let seenHigh: Int
+}
+
 /// Thin shell around the core: polls the stick at 60 Hz, forwards frames and commands to the
 /// session, and exposes what the views draw.
 @MainActor @Observable
@@ -35,12 +42,69 @@ final class AppModel {
     private(set) var peakReportRate = 0
     private(set) var pads: [Pad] = []
     private(set) var trails: [[CGPoint]] = []
+    /// The configuration read from the stick on request; nil until then.
+    private(set) var storedBlock: VKBBlock?
+    private(set) var storedError: String?
+    private(set) var lastBackup: URL?
 
     init(clock: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime }) {
         self.clock = clock
     }
 
     var selectedDevice: DeviceInfo? { devices.first { $0.id == selectedID } }
+
+    /// Nil when the axis has no reading, for example just after the stick was unplugged.
+    func reading(for axis: Int) -> AxisReading? {
+        guard samples.indices.contains(axis), seenLow.indices.contains(axis), seenHigh.indices.contains(axis) else { return nil }
+        return AxisReading(value: samples[axis].value, seenLow: seenLow[axis], seenHigh: seenHigh[axis])
+    }
+    var isVKB: Bool { selectedDevice?.vendorID == 0x231D }
+
+    // MARK: - Configuration stored on the stick
+
+    /// Asks the stick for its configuration block. Sends read requests only. Blocks for about
+    /// half a second, so it is not offered while the guided test is running.
+    func readStoredConfig() {
+        storedError = nil
+        lastBackup = nil
+        guard !session.isRunning, let transport = source.vkbTransport() else {
+            storedError = "This stick's configuration cannot be read."
+            return
+        }
+        do {
+            var link = VKBLink(transport: transport)
+            let token = try link.readToken()
+            let block = try link.readBlock(token: token)
+            guard block.isIntact else {
+                storedBlock = nil
+                storedError = "The stick's checksum does not match what was read, so the result is not shown."
+                return
+            }
+            storedBlock = block
+        } catch {
+            storedBlock = nil
+            storedError = "\(error)"
+        }
+    }
+
+    func saveBackup() {
+        guard let storedBlock, let device = selectedDevice else { return }
+        do {
+            lastBackup = try BackupStore.save(storedBlock, deviceName: device.name)
+        } catch {
+            storedError = "The backup could not be saved: \(error)"
+        }
+    }
+
+    func revealBackup() {
+        guard let lastBackup else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([lastBackup])
+    }
+
+    /// The centre dead zone the stick itself applies to this axis, in %, when known.
+    func stickDeadzone(for axis: AxisInfo) -> Double? {
+        storedBlock?.storedAxis(named: axis.name)?.logical.deadzoneLow
+    }
 
     func start() {
         guard timer == nil else { return }
@@ -108,6 +172,9 @@ final class AppModel {
         let axes = source.axes
         session = Session(axes: axes)
         report = nil
+        storedBlock = nil
+        storedError = nil
+        lastBackup = nil
         samples = source.drain(time: clock())?.samples ?? []
         buttonCount = source.buttonCount
         pads = Self.pads(for: axes)
@@ -138,7 +205,8 @@ final class AppModel {
             if frame.samples[index].low < seenLow[index] { seenLow[index] = frame.samples[index].low }
             if frame.samples[index].high > seenHigh[index] { seenHigh[index] = frame.samples[index].high }
         }
-        for (padIndex, pad) in pads.enumerated() {
+        for (padIndex, pad) in pads.enumerated()
+        where padIndex < trails.count && max(pad.x, pad.y) < frame.samples.count {
             let point = CGPoint(x: session.axes[pad.x].fraction(Double(frame.samples[pad.x].value)),
                                 y: session.axes[pad.y].fraction(Double(frame.samples[pad.y].value)))
             if trails[padIndex].last != point {

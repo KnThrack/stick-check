@@ -125,7 +125,7 @@ struct ResultsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             overall
-            ForEach(report.axes) { AxisResult(report: $0) }
+            ForEach(report.axes) { AxisResult(report: $0, stickDeadzone: model.stickDeadzone(for: $0.axis)) }
             if report.restDisturbed {
                 Text("The stick moved during step 1, so that measurement was started over.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -169,6 +169,8 @@ struct ResultsView: View {
 
 struct AxisResult: View {
     let report: AxisReport
+    /// The centre dead zone the stick's firmware applies, when its configuration has been read.
+    var stickDeadzone: Double?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -206,6 +208,11 @@ struct AxisResult: View {
                     }
                 }
                 .font(.callout)
+            }
+            if report.tested, report.axis.kind == .centring, let stickDeadzone, stickDeadzone > 0 {
+                Text(String(format: "The stick itself applies a %.1f %% centre dead zone, so a centre offset smaller than that cannot show up in this test.", stickDeadzone))
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             ForEach(Array(report.findings.enumerated()), id: \.offset) { _, finding in
                 Text(finding.text)

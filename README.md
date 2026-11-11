@@ -4,11 +4,12 @@ A macOS app that measures a USB joystick and says whether it needs recalibrating
 
 It is a measuring tool, not a calibrator. macOS has no system-wide joystick calibration: games read the raw values the stick sends, and a VKB stick's calibration lives in its firmware, written by VKB's Windows-only VKBDevCfg.
 
-The app itself only listens to input reports. The two `--vkb-…` commands below also send read requests to a VKB stick to fetch its stored configuration. Nothing in this code can write a configuration or send a command to the stick: the request builder only knows the three read commands.
+The app listens to input reports. Only the "Read from stick" button and the two `--vkb-…` commands below send anything to a VKB stick: read requests that fetch its stored configuration. Nothing in this code can write a configuration or send a command to the stick: the request builder only knows the three read commands.
 
 ## What it shows
 
 - **Live:** every axis as raw counts and per cent, the range seen so far, X/Y and ministick pads with a trail, pressed buttons, the hat, and the report rate.
+- **Stored on the stick** (VKB only, on request): which sensor slot feeds each axis, the calibration the stick holds for it (`Bias`, `KdLo`, `KdHi`), and the dead zones the firmware applies before the computer sees a value. A backup of the whole configuration can be saved from here.
 - **Guided test** (about a minute):
   1. *Hands off* – where each axis rests and how much it jitters.
   2. *Full travel* – whether each axis reaches both ends of its range.
@@ -57,4 +58,5 @@ The protocol is not VKB-documented. It comes from the [vkbdevcfg-explained](http
 
 - It reports X, Y, Rx, Ry as 0…4095 and Rz, Z as 0…2047, plus two unnamed axes, 128 buttons and one hat.
 - It only sends a report when something changes, so the report rate is near zero at rest.
+- The firmware applies its own dead zones (on this unit 3 % at the centre of X and Y, 10 % on twist and ministick). A centre reading of exactly 2048 therefore only shows the offset is inside that dead zone.
 - Which physical control drives which axis depends on the profile loaded on the stick. Set each axis to *Self-centring* or *Slider* in the app before testing.

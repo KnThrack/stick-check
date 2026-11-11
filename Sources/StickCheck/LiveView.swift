@@ -25,13 +25,18 @@ struct LiveView: View {
 
                 VStack(spacing: 8) {
                     ForEach(model.session.axes) { axis in
-                        if model.samples.indices.contains(axis.id) {
-                            AxisRow(model: model, axis: axis)
+                        if let reading = model.reading(for: axis.id) {
+                            AxisRow(model: model, axis: axis, reading: reading)
                         }
                     }
                 }
 
                 ButtonsView(model: model)
+
+                if model.isVKB {
+                    Divider()
+                    StoredView(model: model)
+                }
             }
             .padding(16)
         }
@@ -41,15 +46,19 @@ struct LiveView: View {
 struct AxisRow: View {
     let model: AppModel
     let axis: AxisInfo
+    /// Handed in by the parent. A row must not index the model's arrays itself: when the stick is
+    /// unplugged SwiftUI can re-run a row's body after the arrays have emptied and before the row
+    /// is removed, which crashed the app.
+    let reading: AxisReading
 
     var body: some View {
-        let value = model.samples[axis.id].value
+        let value = reading.value
         let percent = axis.kind == .centring
             ? 100 * (Double(value) - axis.mid) / max(axis.halfRange, 1)
             : 100 * axis.fraction(Double(value))
         HStack(spacing: 10) {
             Text(axis.name).font(.body.weight(.medium)).frame(width: 52, alignment: .leading)
-            AxisBar(axis: axis, value: value, seenLow: model.seenLow[axis.id], seenHigh: model.seenHigh[axis.id])
+            AxisBar(axis: axis, value: value, seenLow: reading.seenLow, seenHigh: reading.seenHigh)
                 .frame(height: 18)
             Text("\(value)").monospacedDigit().frame(width: 44, alignment: .trailing)
             Text(String(format: axis.kind == .centring ? "%+.1f %%" : "%.1f %%", percent))

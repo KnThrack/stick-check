@@ -7,11 +7,6 @@ import StickHID
 /// configuration block and never sends a write or a command.
 @MainActor
 enum VKBCommand {
-    static var backupFolder: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Stick Check/Backups", isDirectory: true)
-    }
-
     /// Prints the configuration summary; with `backup`, also saves the block. Returns the exit code.
     static func run(backup: Bool) -> Int32 {
         let source = HIDStickSource()
@@ -43,30 +38,16 @@ enum VKBCommand {
             let ram = try link.readBlock(token: token, from: .readRAM)
             print(ram == block ? "RAM copy: identical to flash" : "RAM copy: DIFFERS from flash")
             print("Requests repeated after a stale reply: \(link.retries)")
-            if backup { try save(block, device: device) }
+            if backup {
+                let url = try BackupStore.save(block, deviceName: device.name)
+                let digest = SHA256.hash(data: Data(block.bytes)).map { String(format: "%02x", $0) }.joined()
+                print("Backup saved and read back: \(url.path)")
+                print("SHA-256: \(digest)")
+            }
             return 0
         } catch {
             print("Failed: \(error)")
             return 1
         }
-    }
-
-    private static func save(_ block: VKBBlock, device: DeviceInfo) throws {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HHmmss"
-        let name = "\(device.name) \(formatter.string(from: Date())).vkbblock"
-        let url = backupFolder.appendingPathComponent(name)
-        try FileManager.default.createDirectory(at: backupFolder, withIntermediateDirectories: true)
-        let data = Data(block.bytes)
-        try data.write(to: url, options: .withoutOverwriting)
-        // Read it back: a backup that was not checked is not a backup.
-        guard try Data(contentsOf: url) == data else {
-            print("The saved file does not match what was read. Do not rely on it.")
-            return
-        }
-        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: url.path)
-        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-        print("Backup saved and read back: \(url.path)")
-        print("SHA-256: \(digest)")
     }
 }

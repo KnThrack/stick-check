@@ -73,6 +73,12 @@ func sampleBlock() -> [UInt8] {
     block.replaceSubrange(0x7C..<0x84, with: [0x00, 0, 0, 0, 120, 131, 37, 0])
     block.replaceSubrange(0x84..<0x8C, with: [0x04, 0, 0, 0, 99, 101, 0xFB, 0x1F])
     block.replaceSubrange(0x8C..<0x94, with: [0x01, 0, 0, 0, 200, 201, 0x00, 0x10])
+    // Output axes: X reads slot 0; Rz reads slot 2 at 11 bits with a 1.5 % centre dead zone, inverted;
+    // a hidden Slider on slot 1; Y is the second half of a circular dead zone with X; the rest disabled.
+    block.replaceSubrange(0x3C..<0x44, with: [0xB0, 0x00, 0x0C, 0, 0, 0, 0, 0])
+    block.replaceSubrange(0x44..<0x4C, with: [0xF2, 0x05, 0x0B, 15, 20, 0, 0, 0])
+    block.replaceSubrange(0x4C..<0x54, with: [0x11, 0x06, 0x0C, 0, 0, 0, 0, 0])
+    block.replaceSubrange(0x54..<0x5C, with: [0xB1, 0x41, 0x0C, 0x00, 0, 0, 0, 0])
     let crc = VKBBytes.crc32STM32(block[8...])
     for i in 0..<4 { block[4 + i] = UInt8((crc >> (8 * UInt32(i))) & 0xFF) }
     return block
@@ -167,4 +173,24 @@ let sampleToken: [UInt8] = (1...16).map { UInt8($0 * 13 & 0xFF) }
     damaged[0x200] ^= 0x40
     #expect(try !VKBBlock(bytes: damaged).isIntact)
     #expect(throws: VKBError.wrongBlockSize(100)) { try VKBBlock(bytes: [UInt8](repeating: 0, count: 100)) }
+}
+
+@Test func blockDecodesOutputAxesAndTheirSensors() throws {
+    let block = try VKBBlock(bytes: sampleBlock())
+    let axes = block.logicalAxes
+    #expect(axes[0].usageName == "X" && axes[0].physicalSlot == 0 && axes[0].precisionBits == 12)
+    #expect(axes[0].enabled && axes[0].visible && axes[0].centred && !axes[0].inverted)
+    #expect(axes[1].usageName == "Rz" && axes[1].physicalSlot == 2 && axes[1].precisionBits == 11)
+    #expect(axes[1].inverted && axes[1].deadzoneLow == 1.5 && axes[1].deadzoneHigh == 2.0)
+    #expect(axes[2].usageName == "Slider" && !axes[2].visible && !axes[2].centred)
+    #expect(axes[3].usageName == "Y" && axes[3].deadzoneLow == nil && axes[3].circularDeadzonePartner == 0)
+    #expect(!axes[4].enabled)
+
+    // Looking an axis up by the name the live view uses gives the sensor slot behind it.
+    let twist = try #require(block.storedAxis(named: "Rz"))
+    #expect(twist.physical.slot == 2 && twist.physical.bias == -4096)
+    #expect(block.storedAxis(named: "X")?.physical.bias == 37)
+    #expect(block.storedAxis(named: "Slider") == nil)   // hidden
+    #expect(block.storedAxis(named: "Z") == nil)        // not configured
+    #expect(block.summary.contains("Rz      ← slot 2, 11 bit, dead zone 1.5 % low / 2.0 % high, centred, inverted"))
 }

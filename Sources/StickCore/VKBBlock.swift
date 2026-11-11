@@ -21,6 +21,35 @@ public struct VKBPhysicalAxis: Sendable, Equatable, Identifiable {
     public var holdsCalibration: Bool { kdHi != 255 || kdLo != 255 || bias != 0 }
 }
 
+/// One output axis as the stick presents it to the computer: which sensor it reads, under which
+/// HID usage, and the dead zones the stick itself applies before a game sees anything.
+public struct VKBLogicalAxis: Sendable, Equatable, Identifiable {
+    public static let usageNames = ["X", "Y", "Z", "Rx", "Ry", "Rz", "Slider", "Dial", "Wheel", "Rudder",
+                                    "Throttle", "Accelerator", "Flaps", "Aileron", "Aileron trim", "Elevator"]
+
+    public let slot: Int
+    /// The physical axis slot this output reads.
+    public let physicalSlot: Int
+    public let enabled: Bool
+    /// Reported to the computer. A hidden axis can still feed buttons or other axes.
+    public let visible: Bool
+    public let inverted: Bool
+    /// The stick treats it as an axis with a centre.
+    public let centred: Bool
+    public let usageIndex: Int
+    public let precisionBits: Int
+    /// Dead zone at the centre (or at the bottom of an axis without a centre), in %.
+    /// Nil when this axis is the second half of a circular dead zone and shares its partner's.
+    public let deadzoneLow: Double?
+    /// Dead zone at the top of the range, in %.
+    public let deadzoneHigh: Double
+    public let circularDeadzonePartner: Int?
+
+    public var id: Int { slot }
+    /// Same names as `AxisInfo.describe` for the usages both can express.
+    public var usageName: String { Self.usageNames[usageIndex] }
+}
+
 /// The stick's whole configuration: one 4096-byte block kept in its flash.
 /// Field positions are from the vkbdevcfg-explained project (docs/BLOCK-AXES.md).
 public struct VKBBlock: Sendable, Equatable {
@@ -69,14 +98,54 @@ public struct VKBBlock: Sendable, Equatable {
         }
     }
 
+    /// The first eight logical axis slots (records of 8 bytes at 0x3C).
+    public var logicalAxes: [VKBLogicalAxis] {
+        (0..<8).map { slot in
+            let base = 0x3C + 8 * slot
+            let circular = bytes[base + 1] & 0x40 != 0
+            return VKBLogicalAxis(slot: slot,
+                                  physicalSlot: Int(bytes[base] & 0x0F),
+                                  enabled: bytes[base] & 0x10 != 0,
+                                  visible: bytes[base] & 0x20 != 0,
+                                  inverted: bytes[base] & 0x40 != 0,
+                                  centred: bytes[base] & 0x80 != 0,
+                                  usageIndex: Int(bytes[base + 1] & 0x0F),
+                                  precisionBits: Int(bytes[base + 2] & 0x0F),
+                                  deadzoneLow: circular ? nil : Double(bytes[base + 3]) / 10,
+                                  deadzoneHigh: Double(bytes[base + 4]) / 10,
+                                  circularDeadzonePartner: circular ? Int(bytes[base + 3] & 0x0F) : nil)
+        }
+    }
+
+    /// The enabled output axis reported under this HID usage name ("X", "Rz", …) and the sensor
+    /// slot behind it. Nil when no enabled, visible axis uses that name.
+    public func storedAxis(named name: String) -> (logical: VKBLogicalAxis, physical: VKBPhysicalAxis)? {
+        guard let logical = logicalAxes.first(where: { $0.enabled && $0.visible && $0.usageName == name }),
+              logical.physicalSlot < 8
+        else { return nil }
+        return (logical, physicalAxes[logical.physicalSlot])
+    }
+
     /// A plain-text summary. Contains nothing that identifies one particular stick.
     public var summary: String {
         var lines = [
             "Configuration block: \(bytes.count) bytes, type id 0x\(String(format: "%02X", typeID)), firmware \(firmwareText)",
             String(format: "Checksum: stored %08X, computed %08X — %@", storedCRC, computedCRC,
                    isIntact ? "match" : "MISMATCH"),
-            "Physical axis slots (calibration as stored on the stick):",
+            "Output axes (what the computer sees, and the sensor slot behind each):",
         ]
+        for axis in logicalAxes where axis.enabled {
+            let deadzone = axis.deadzoneLow.map { String(format: "%.1f %%", $0) }
+                ?? "shared with axis \(axis.circularDeadzonePartner ?? 0)"
+            let flags = [axis.visible ? nil : "hidden",
+                         axis.centred ? "centred" : "no centre",
+                         axis.inverted ? "inverted" : nil].compactMap { $0 }
+            lines.append(String(format: "  %@ ← slot %d, %d bit, dead zone %@ low / %.1f %% high, %@",
+                                axis.usageName.padding(toLength: 7, withPad: " ", startingAt: 0),
+                                axis.physicalSlot, axis.precisionBits, deadzone, axis.deadzoneHigh,
+                                flags.joined(separator: ", ")))
+        }
+        lines.append("Physical axis slots (calibration as stored on the stick):")
         for axis in physicalAxes {
             let flags = [axis.calibrated ? "calibrated" : "not calibrated",
                          axis.autoCentring ? "auto-centre" : nil,
