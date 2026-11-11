@@ -2,14 +2,14 @@
 
 A macOS app that measures a USB joystick and says whether it needs recalibrating. Written for a VKB Gladiator EVO, but it reads any HID joystick or gamepad.
 
-macOS has no system-wide joystick calibration: games read the raw values the stick sends, and a VKB stick's calibration lives in its firmware. The app measures; for a VKB stick the command line can also run the stick's own calibration, which otherwise needs VKB's Windows-only VKBDevCfg.
+macOS has no system-wide joystick calibration: games read the raw values the stick sends, and a VKB stick's calibration lives in its firmware. The app measures; for a VKB stick it can also run the stick's own calibration, which otherwise needs VKB's Windows-only VKBDevCfg.
 
-The app listens to input reports. The "Read from stick" button and the `--vkb-info` and `--vkb-backup` commands send read requests that fetch a VKB stick's stored configuration. Two commands change the stick: `--vkb-restore … --yes` puts a saved configuration back, and `--vkb-calibrate` runs the stick's calibration. Nothing here can send the protocol's other short commands (restart, factory defaults, bootloader).
+The app listens to input reports. The "Read from stick" button and the `--vkb-info` and `--vkb-backup` commands send read requests that fetch a VKB stick's stored configuration. Two things change the stick: restoring a saved configuration (`--vkb-restore … --yes`, or "Restore previous" and "Abandon" in the calibration guide) and running its calibration ("Calibrate…" or `--vkb-calibrate`). Nothing here can send the protocol's other short commands (restart, factory defaults, bootloader).
 
 ## What it shows
 
 - **Live:** every axis as raw counts and per cent, the range seen so far, X/Y and ministick pads with a trail, pressed buttons, the hat, and the report rate.
-- **Stored on the stick** (VKB only, on request): which sensor slot feeds each axis, the calibration the stick holds for it (`Bias`, `KdLo`, `KdHi`), and the dead zones the firmware applies before the computer sees a value. A backup of the whole configuration can be saved from here.
+- **Stored on the stick** (VKB only, on request): which sensor slot feeds each axis, the calibration the stick holds for it (`Bias`, `KdLo`, `KdHi`), and the dead zones the firmware applies before the computer sees a value. A backup of the whole configuration can be saved from here, and "Calibrate…" runs the stick's own calibration with a guide: backup, Start, move every axis, Commit, then a before/after table with "Restore previous".
 - **Guided test** (about a minute):
   1. *Hands off* – where each axis rests and how much it jitters.
   2. *Full travel* – whether each axis reaches both ends of its range.

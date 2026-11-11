@@ -92,6 +92,12 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 940, minHeight: 620)
+        .sheet(isPresented: Binding(get: { model.calibration != nil }, set: { if !$0 { model.closeCalibration() } })) {
+            if let step = model.calibration {
+                CalibrationSheet(model: model, step: step)
+                    .interactiveDismissDisabled()
+            }
+        }
     }
 }
 

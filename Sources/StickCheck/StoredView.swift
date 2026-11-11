@@ -14,6 +14,9 @@ struct StoredView: View {
                 Button(model.storedBlock == nil ? "Read from stick" : "Read again") { model.readStoredConfig() }
                     .disabled(model.session.isRunning)
                     .help("Asks the stick for its configuration. Read-only: nothing on the stick is changed.")
+                Button("Calibrate…") { model.beginCalibration() }
+                    .disabled(model.session.isRunning)
+                    .help("Runs the stick's own calibration. Opens a guide first; nothing is sent until you press Start.")
             }
 
             if let error = model.storedError {
