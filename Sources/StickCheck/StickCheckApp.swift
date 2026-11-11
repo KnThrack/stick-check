@@ -6,8 +6,13 @@ import SwiftUI
 @main
 enum Main {
     @MainActor static func main() {
-        if CommandLine.arguments.contains("--dump") {
+        let arguments = CommandLine.arguments
+        if arguments.contains("--dump") {
             dump()
+        } else if arguments.contains("--vkb-info") {
+            exit(VKBCommand.run(backup: false))
+        } else if arguments.contains("--vkb-backup") {
+            exit(VKBCommand.run(backup: true))
         } else {
             StickCheckApp.main()
         }

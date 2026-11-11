@@ -2,7 +2,9 @@
 
 A macOS app that measures a USB joystick and says whether it needs recalibrating. Written for a VKB Gladiator EVO, but it reads any HID joystick or gamepad.
 
-It is a measuring tool, not a calibrator. macOS has no system-wide joystick calibration: games read the raw values the stick sends, and a VKB stick's calibration lives in its firmware, written by VKB's Windows-only VKBDevCfg. Stick Check only listens to input reports and never writes to the device.
+It is a measuring tool, not a calibrator. macOS has no system-wide joystick calibration: games read the raw values the stick sends, and a VKB stick's calibration lives in its firmware, written by VKB's Windows-only VKBDevCfg.
+
+The app itself only listens to input reports. The two `--vkb-…` commands below also send read requests to a VKB stick to fetch its stored configuration. Nothing in this code can write a configuration or send a command to the stick: the request builder only knows the three read commands.
 
 ## What it shows
 
@@ -31,10 +33,24 @@ The second builds `build/Stick Check.app`, which can be double-clicked. `StickCh
 swift test
 ```
 
+## Reading a VKB stick's configuration
+
+```bash
+swift run StickCheck --vkb-info
+```
+
+```bash
+swift run StickCheck --vkb-backup
+```
+
+`--vkb-info` fetches the stick's 4096-byte configuration block, checks the stick's own checksum and prints the firmware version and the calibration stored for each physical axis (a zero offset `Bias` and two gains `KdLo`/`KdHi`). `--vkb-backup` also saves the block, read-only, to `~/Library/Application Support/Stick Check/Backups/`. The file is the raw block; it holds the per-unit calibration, so keep it out of git.
+
+The protocol is not VKB-documented. It comes from the [vkbdevcfg-explained](https://github.com/brewer-corp/vkbdevcfg-explained) project (MIT), which worked it out from VKBDevCfg and verified reading and writing on a Gladiator EVO R at firmware 2.20.C. Reading is confirmed here on a Gladiator EVO L at the same firmware. The meaning of individual fields is theirs and only partly confirmed.
+
 ## Layout
 
-- `Sources/StickCore` – the test as a pure state machine (`Session`) fed by commands, and the analysis. No IOKit, no UI; all the tests are here.
-- `Sources/StickHID` – reads the stick through IOKit HID.
+- `Sources/StickCore` – the test as a pure state machine (`Session`) fed by commands, the analysis, and the read side of VKB's configuration protocol (`VKBLink`, `VKBBlock`). No IOKit, no UI; all the tests are here.
+- `Sources/StickHID` – reads the stick through IOKit HID; `HIDFeatureTransport` carries the configuration frames.
 - `Sources/StickCheck` – SwiftUI shell.
 
 ## Notes on the Gladiator EVO

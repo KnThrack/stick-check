@@ -17,8 +17,8 @@ public struct DeviceInfo: Sendable, Equatable, Identifiable {
     }
 }
 
-/// Reads joysticks through IOKit HID. Read-only: it listens to input reports and never sends
-/// output or feature reports, so it cannot change anything stored on the device.
+/// Reads joysticks through IOKit HID. It listens to input reports and sends nothing itself.
+/// The only path that sends anything to a device is `vkbTransport()`, used for read requests.
 @MainActor
 public final class HIDStickSource {
     private final class Entry {
@@ -107,6 +107,9 @@ public final class HIDStickSource {
     // MARK: - Selected device
 
     private var selected: Entry? { selectedID.flatMap { entries[$0] } }
+
+    var selectedHIDDevice: IOHIDDevice? { selected?.device }
+    public var selectedDeviceInfo: DeviceInfo? { selected?.info }
 
     public var axes: [AxisInfo] { selected?.axes ?? [] }
     public var pressedButtons: [Int] { selected?.pressed.sorted() ?? [] }
